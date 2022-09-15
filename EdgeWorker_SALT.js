@@ -1,52 +1,48 @@
 import { createResponse } from 'create-response';
 import { httpRequest } from 'http-request';
-import { ReadableStream, WritableStream } from 'streams';
-import { TextEncoderStream, TextDecoderStream } from 'text-encode-transform';
 import { logger } from 'log';
 
-const omit = (obj, attr) => {
-    const keysToRemove = new Set(attr.flat()); // flatten the props, and convert to a Set
-  
+const omit = (obj, keysToRemove) => {  
     return Object.fromEntries( // convert the entries back to object
         Object.entries(obj) // convert the object to entries
         .filter(([k]) => !keysToRemove.has(k)) // remove entries with keys that exist in the Set
     );
 }
 
-const isRequestBody = method => ((method === 'POST') || (method === 'PUT') || (method === 'DELETE') || (method === 'PATCH')) ? true : false
+const headersToRemove = new Set('host', 'vary', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'transfer-encoding', 'trailers')
+const isRequestBody = method => (method === 'POST') || (method === 'PUT') || (method === 'DELETE') || (method === 'PATCH') // Remove this check, we need all methods
 const responseProvider = async (request) => {
     const reqOptions = {
         headers: omit(
            request.getHeaders(),
-           ['host','vary', 'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'transfer-encoding', 'trailers']
+           headersToRemove
            )
     }
 
     let date = new Date();
-    const httpRequestOptions =  isRequestBody(request.method)
-                                ? {                                   
-                                    ...{
-                                        body: await request.text(),
-                                        
-                                    }, 
-                                 ...reqOptions
-                                }
-                                :  reqOptions
+    const httpRequestOptions = isRequestBody(request.method)
+                               ? {                                   
+                                   ...{
+                                       body: await request.text(), 
+                                   }, 
+                                ...reqOptions
+                               }
+                               :  reqOptions
 
-const debug = request.getHeader('debug')
-const UUID = request.getVariable('PMUSER_UUID');
-const Authorization = request.getVariable('PMUSER_AUTHORIZATION');
-const ENV = request.getVariable('PMUSER_ENV');
-const REGION = request.getVariable('PMUSER_REGION');
-const values = isRequestBody(request.method) ?  httpRequestOptions.body.replace(/\+/g,' ') : ""
-const hed = {}
-hed.body = values
-hed.headers = httpRequestOptions.headers
-hed.method = request.method
+    const debug = request.getHeader('salt_debug')
+    const UUID = request.getVariable('PMUSER_UUID');
+    const Authorization = request.getVariable('PMUSER_AUTHORIZATION');
+    const ENV = request.getVariable('PMUSER_ENV');
+    const REGION = request.getVariable('PMUSER_REGION');
+    const values = isRequestBody(request.method) ?  httpRequestOptions.body.replace(/\+/g,' ') : ""
+    const hed = {}
+    hed.body = values
+    hed.headers = httpRequestOptions.headers
+    hed.method = request.method
 
-    return   httpRequest(`https://${request.host}${request.url}`, hed)
-            .then(res =>  res.text() 
-                        .then(json => {          
+    return httpRequest(`https://${request.host}${request.url}`, hed)
+           .then(res =>  res.text() 
+                        .then(resBody => {          
                            // logger.log("Response = " + JSON.stringify(res.getHeaders()))              
                             const raw = JSON.stringify({
                                     "request": 
@@ -66,7 +62,7 @@ hed.method = request.method
                                         "httpVersion": "1.1",
                                         "statusCode": res.status.toString(),
                                         "headers": encodeHeaders(res.getHeaders()),
-                                        "body": base64(_utf8_encode(json))
+                                        "body": base64(_utf8_encode(resBody))
                                     },
                                     "props":
                                     {
@@ -86,10 +82,7 @@ hed.method = request.method
                                         {
                                         "Authorization": Authorization,
                                         "Content-Type": "application/json",
-                                        "Accept": "*/*",
-                                        "Cache-Control": "no-cache",
-                                        "Connection": "keep-alive"
-                                       },
+                                        },
                                   body: raw,
                                     redirect: 'follow'
                                 };   
@@ -107,7 +100,7 @@ hed.method = request.method
                             return createResponse(
                                 res.status,
                                 res.headers,
-                                JSON.stringify(json)
+                                resBody
                            );
                            }
                         })
@@ -173,13 +166,11 @@ var base64 = function(input) {
   
   
   function encodeHeaders(headers) {
-    const objEntries = Object.entries(headers).map(([key, value]) => `${key}: ${value}`);
-   const mapToArray = Array.from(objEntries.values());
+    const objEntries = Object.entries(headers).map(([key, value]) => base64(`${key}: ${value}`));
+    const mapToArray = Array.from(objEntries.values());
     return mapToArray;
 }
 
 
 
-
-
-  export { responseProvider }
+export { responseProvider }
