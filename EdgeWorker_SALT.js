@@ -1,7 +1,5 @@
 import { createResponse } from 'create-response';
 import { httpRequest } from 'http-request';
-import { ReadableStream, WritableStream } from 'streams';
-import { TextEncoderStream, TextDecoderStream } from 'text-encode-transform';
 import { logger } from 'log';
 
 const omit = (obj, attr) => {
@@ -13,7 +11,6 @@ const omit = (obj, attr) => {
     );
 }
 
-const isRequestBody = method => ((method === 'POST') || (method === 'PUT') || (method === 'DELETE') || (method === 'PATCH')) ? true : false
 const responseProvider = async (request) => {
     const reqOptions = {
         headers: omit(
@@ -23,31 +20,27 @@ const responseProvider = async (request) => {
     }
 
     let date = new Date();
-    const httpRequestOptions =  isRequestBody(request.method)
-                                ? {                                   
+    const httpRequestOptions =  {                                   
                                     ...{
                                         body: await request.text(),
                                         
                                     }, 
                                  ...reqOptions
                                 }
-                                :  reqOptions
+                           
 
 const debug = request.getHeader('debug')
 const UUID = request.getVariable('PMUSER_UUID');
 const Authorization = request.getVariable('PMUSER_AUTHORIZATION');
 const ENV = request.getVariable('PMUSER_ENV');
 const REGION = request.getVariable('PMUSER_REGION');
-const values = isRequestBody(request.method) ?  httpRequestOptions.body.replace(/\+/g,' ') : ""
 const hed = {}
-hed.body = values
+hed.body = httpRequestOptions.body
 hed.headers = httpRequestOptions.headers
 hed.method = request.method
-
     return   httpRequest(`https://${request.host}${request.url}`, hed)
             .then(res =>  res.text() 
                         .then(json => {          
-                           // logger.log("Response = " + JSON.stringify(res.getHeaders()))              
                             const raw = JSON.stringify({
                                     "request": 
                                     {
@@ -97,7 +90,7 @@ hed.method = request.method
                            {
                             return httpRequest(`https://${request.host}/fakepath/saltsec/v1/http/exchange`,requestOptions )
                                .then(res1 => res1.text()
-                               .then(json1 => {logger.log("res: "  + json1)}
+                               .then(json1 => {logger.log("res: "  + JSON.stringify(json1))}
                               )
                              )
                            }
