@@ -26,9 +26,9 @@ const filterKeys = (obj, keysToRemove) => {
 }
 
 class StreamDuplicator {
-    constructor(store, streamName) {
+    constructor(callback) {
         let readController = null;
-
+        let result = [];
         this.readable = new ReadableStream({
             start(controller) {
                 readController = controller;
@@ -38,9 +38,10 @@ class StreamDuplicator {
         this.writable = new WritableStream({
             write(text) {
                 readController.enqueue(text);
-                store[streamName] = store[streamName] + text;
+                result.push(text);
             },
             close(controller) {
+                callback(result.join(""));
                 readController.close();
             }
 
@@ -49,8 +50,8 @@ class StreamDuplicator {
 }
 
 const responseProvider = async (request) => {
-
-    const debug = request.getHeader('debug')
+    const timeout = 15000;
+    const debug = request.getHeader('debug');
     const UUID = request.getVariable('PMUSER_UUID');
     const Authorization = request.getVariable('PMUSER_AUTHORIZATION');
     const ENV = request.getVariable('PMUSER_ENV');
@@ -59,63 +60,61 @@ const responseProvider = async (request) => {
 
     const labels = labelsGen(ENV, REGION)
     let date = new Date();
-    let bodyStore = {request: "", response: ""};
+    let requestBody = "";
 
-    const httpRequestOptions = {
-        body: body
-            .pipeThrough(new TextDecoderStream())
-            .pipeThrough(new StreamDuplicator(bodyStore, REQUEST))
+    const originalRequest = {
+        body: body.pipeThrough(new TextDecoderStream())
+            .pipeThrough(new StreamDuplicator((result) => requestBody = result))
             .pipeThrough(new TextEncoderStream()),
         headers: filterKeys(request.getHeaders(), UNSAFE_REQUEST_HEADERS),
+        method: request.method,
+        timeout: timeout,
     }
-    const originalRequest = {}
-    originalRequest.body = httpRequestOptions.body
-    originalRequest.headers = httpRequestOptions.headers
-    originalRequest.method = request.method
-
-    originalRequest.timeout = 15000
-
 
     return httpRequest(`${request.scheme}://${request.host}${request.url}`, originalRequest)
         .then(response => {
-            const saltBody = {
-                "request":
-                {
-                    "timestamp": date,
-                    "originalClientIp": request.getHeader('true-client-ip')[0],
-                    "method": request.method,
-                    "uri": request.url,
-                    "httpVersion": "1.1",
-                    "headers": encodeHeaders(request.getHeaders()),
-                    "body": btoa(_utf8_encode(bodyStore[REQUEST]))
-                },
-                "response":
-                {
-                    "timestamp": date,
-                    "httpVersion": "1.1",
-                    "statusCode": response.status.toString(),
-                    "headers": encodeHeaders(response.getHeaders()),
-                    "body": btoa(_utf8_encode(bodyStore[RESPONSE]))
-                },
-                "props":
-                {
-                    "uuid": UUID,
-                    "version": "[[VERSION]]",
-                    "platform": "akamai-edgeworker",
+            const saltRequestCallback = (responseBody) => {
+                const saltBody = {
+                    "request":
+                    {
+                        "timestamp": date,
+                        "originalClientIp": request.getHeader('true-client-ip')[0],
+                        "method": request.method,
+                        "uri": request.url,
+                        "httpVersion": "1.1",
+                        "headers": encodeHeaders(request.getHeaders()),
+                        "body": btoa(_utf8_encode(requestBody))
+                    },
+                    "response":
+                    {
+                        "timestamp": date,
+                        "httpVersion": "1.1",
+                        "statusCode": response.status.toString(),
+                        "headers": encodeHeaders(response.getHeaders()),
+                        "body": btoa(_utf8_encode(responseBody))
+                    },
+                    "props":
+                    {
+                        "uuid": UUID,
+                        "version": "[[VERSION]]",
+                        "platform": "akamai-edgeworker",
+                    }
+                };
+                if (Object.keys(labels).length !== 0) {
+                    saltBody.props.labels = labels;
                 }
-            };
-            if (Object.keys(labels).length !== 0) {
-                saltBody.props.labels = labels;
-            }
-            const requestOptions = {
-                method: 'POST',
-                headers:
-                {
-                    "Authorization": "Basic " + Authorization,
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify(saltBody),
-                redirect: 'follow'
+                const requestOptions = {
+                    method: 'POST',
+                    headers:
+                    {
+                        "Authorization": "Basic " + Authorization,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(saltBody),
+                    redirect: 'follow'
+                }
+
+                httpRequest(`https://${request.host}/fakepath/saltsec/v1/http/exchange`, requestOptions)
             }
 
             if (debug == 'yes') {
@@ -126,12 +125,11 @@ const responseProvider = async (request) => {
                     );
             }
             else {
-                httpRequest(`https://${request.host}/fakepath/saltsec/v1/http/exchange`, requestOptions)
                 return createResponse(
                     response.status,
                     filterKeys(response.getHeaders(), UNSAFE_RESPONSE_HEADERS),
                     response.body.pipeThrough(new TextDecoderStream())
-                        .pipeThrough(new StreamDuplicator(bodyStore, RESPONSE))
+                        .pipeThrough(new StreamDuplicator(saltRequestCallback))
                         .pipeThrough(new TextEncoderStream()))
             }
         })
@@ -143,9 +141,7 @@ const responseProvider = async (request) => {
 
 
 function encodeHeaders(headers) {
-    const objEntries = Object.entries(headers).map(([key, value]) => `${key}: ${value}`);
-    const mapToArray = Array.from(objEntries.values());
-    return mapToArray;
+    return Object.entries(headers).map(([key, value]) => `${key}: ${value}`);
 }
 
 
