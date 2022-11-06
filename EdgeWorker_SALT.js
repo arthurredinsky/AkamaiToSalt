@@ -5,7 +5,8 @@ import { TextDecoderStream, TextEncoderStream } from 'text-encode-transform';
 import { ReadableStream, WritableStream } from 'streams';
 import { btoa } from "encoding";
 
-
+const REQUEST = "request";
+const RESPONSE = "response";
 const labelsGen = (env, region) => {
     let res = {};
     if (typeof env !== 'undefined') res['env'] = env;
@@ -27,26 +28,25 @@ const filterKeys = (obj, keysToRemove) => {
 class StreamDuplicator {
     constructor(store, streamName) {
         let readController = null;
-        let result = []
+
         this.readable = new ReadableStream({
             start(controller) {
                 readController = controller;
             }
         });
+
         this.writable = new WritableStream({
             write(text) {
-                readController.enqueue(text)
-                result.push(text)
+                readController.enqueue(text);
+                store[streamName] = store[streamName] + text;
             },
             close(controller) {
-                store[streamName] = result.join("")
                 readController.close();
             }
 
         });
     }
 }
-
 
 const responseProvider = async (request) => {
 
@@ -59,12 +59,12 @@ const responseProvider = async (request) => {
 
     const labels = labelsGen(ENV, REGION)
     let date = new Date();
-    let bodyStore = {}
+    let bodyStore = {request: "", response: ""};
 
     const httpRequestOptions = {
         body: body
             .pipeThrough(new TextDecoderStream())
-            .pipeThrough(new StreamDuplicator(bodyStore, "request"))
+            .pipeThrough(new StreamDuplicator(bodyStore, REQUEST))
             .pipeThrough(new TextEncoderStream()),
         headers: filterKeys(request.getHeaders(), UNSAFE_REQUEST_HEADERS),
     }
@@ -87,7 +87,7 @@ const responseProvider = async (request) => {
                     "uri": request.url,
                     "httpVersion": "1.1",
                     "headers": encodeHeaders(request.getHeaders()),
-                    "body": btoa(_utf8_encode(bodyStore["request"]))
+                    "body": btoa(_utf8_encode(bodyStore[REQUEST]))
                 },
                 "response":
                 {
@@ -95,7 +95,7 @@ const responseProvider = async (request) => {
                     "httpVersion": "1.1",
                     "statusCode": response.status.toString(),
                     "headers": encodeHeaders(response.getHeaders()),
-                    "body": btoa(_utf8_encode(bodyStore["response"]))
+                    "body": btoa(_utf8_encode(bodyStore[RESPONSE]))
                 },
                 "props":
                 {
@@ -131,7 +131,7 @@ const responseProvider = async (request) => {
                     response.status,
                     filterKeys(response.getHeaders(), UNSAFE_RESPONSE_HEADERS),
                     response.body.pipeThrough(new TextDecoderStream())
-                        .pipeThrough(new StreamDuplicator(bodyStore, "response"))
+                        .pipeThrough(new StreamDuplicator(bodyStore, RESPONSE))
                         .pipeThrough(new TextEncoderStream()))
             }
         })
@@ -143,7 +143,9 @@ const responseProvider = async (request) => {
 
 
 function encodeHeaders(headers) {
-    return Object.entries(headers).map(([key, value]) => btoa(`${key}: ${value}`));
+    const objEntries = Object.entries(headers).map(([key, value]) => `${key}: ${value}`);
+    const mapToArray = Array.from(objEntries.values());
+    return mapToArray;
 }
 
 
